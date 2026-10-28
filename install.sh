@@ -33,7 +33,7 @@ if ! grep -qiE 'atlas' /sys/class/dmi/id/board_name /sys/class/dmi/id/product_na
     echo "The firmware/topology here is Atlas-specific. Use --force to install anyway." >&2
     [ "$FORCE" -eq 1 ] || exit 1
 fi
-for t in curl zstd make clang ld.lld; do
+for t in curl zstd make clang ld.lld jq pactl; do
     command -v "$t" >/dev/null 2>&1 || { echo "missing required tool: $t" >&2; exit 1; }
 done
 
@@ -84,14 +84,29 @@ echo 'options snd_soc_avs ignore_fw_version=1' > /etc/modprobe.d/atlas-avs.conf
 udevadm control --reload-rules 2>/dev/null || true
 
 echo "== 6/6 user session ($REAL_USER)"
-install -d "$UHOME/.config/pipewire/pipewire.conf.d" "$UHOME/.config/systemd/user"
+install -d "$UHOME/.config/pipewire/pipewire.conf.d" "$UHOME/.config/systemd/user" \
+    "$UHOME/.local/bin"
 install -m 0644 "$REPO/pipewire/20-atlas-clock.conf" \
     "$UHOME/.config/pipewire/pipewire.conf.d/20-atlas-clock.conf"
-install -m 0644 "$REPO/user/atlas-speaker-default.service" \
-    "$UHOME/.config/systemd/user/atlas-speaker-default.service"
+# Jack-driven routing (headphones <-> speakers).  Replaces the old
+# atlas-speaker-default.service pin: this also pins the speakers at login, but
+# yields to an explicit sink choice and never touches the speaker DSP/UCM.
+install -m 0755 "$REPO/user/headphone-switch.sh" "$UHOME/.local/bin/headphone-switch.sh"
+install -m 0644 "$REPO/user/headphone-switch.service" \
+    "$UHOME/.config/systemd/user/headphone-switch.service"
+rm -f "$UHOME/.config/systemd/user/atlas-speaker-default.service"
 chown -R "$REAL_USER:" "$UHOME/.config/pipewire" "$UHOME/.config/systemd/user" 2>/dev/null || true
+chown "$REAL_USER:" "$UHOME/.local/bin/headphone-switch.sh" 2>/dev/null || true
 as_user systemctl --user daemon-reload 2>/dev/null || true
-as_user systemctl --user enable atlas-speaker-default.service 2>/dev/null || true
+as_user systemctl --user disable atlas-speaker-default.service 2>/dev/null || true
+as_user systemctl --user enable --now headphone-switch.service 2>/dev/null || true
+# module-switch-on-connect hands the default to any new sink (HDMI on boot);
+# the jack router owns the speaker<->headphone choice instead.
+if [ -f "$UHOME/.config/pipewire/pipewire-pulse.conf.d/59-switch-on-connect.conf" ]; then
+    mv "$UHOME/.config/pipewire/pipewire-pulse.conf.d/59-switch-on-connect.conf" \
+       "$UHOME/.config/pipewire/pipewire-pulse.conf.d/59-switch-on-connect.conf.disabled"
+    chown "$REAL_USER:" "$UHOME/.config/pipewire/pipewire-pulse.conf.d/"* 2>/dev/null || true
+fi
 as_user systemctl --user restart pipewire wireplumber 2>/dev/null || true
 as_user pactl set-default-sink "$SPK" 2>/dev/null || true
 
@@ -103,5 +118,7 @@ echo "After reboot:"
 echo "  amixer -c MAX98373 controls | grep -E 'DSM|WAVES'"
 echo "  pactl get-default-sink        # ...HiFi__Speaker__sink"
 echo "  sudo dmesg | grep -iE 'ASoC error|firmware boot|failed'"
-echo "If WirePlumber routes to HDMI, the atlas-speaker-default.service pins it back;"
-echo "or set it once with: pactl set-default-sink $SPK"
+echo "headphone-switch.service routes speakers <-> headphones on the jack and"
+echo "pins the speakers at login; plugging headphones in moves the default."
+echo "If WirePlumber still routes to HDMI, set it once with:"
+echo "  pactl set-default-sink $SPK"

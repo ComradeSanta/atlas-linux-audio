@@ -22,7 +22,7 @@ kernel 7.2.11, PipeWire 1.6.9. The result matches ChromeOS subjectively.
 | AVS firmware | stock `skl/dsp_basefw.bin` + generic max98373 topology; no Waves/DSM modules | ChromeOS AVS basefw, ChromeOS `max98373-tplg` topology (playback-only variant), Waves/DSM DSP libraries and module binaries |
 | Codec | MAX98373 defaults | ChromeOS UCM amp calibration (BDE/DHT tables, 9.65 V output stage, speaker protection) + `dsmparam.bin`/`wavesdata.bin` pushed into the DSP |
 | Runtime PM | PCM open fails with `-EINVAL` with the ChromeOS basefw | udev rule keeps the AVS platform components active |
-| Session | HDMI may win the default-node race; adaptive clock | 48 kHz graph lock + high-quality resampling; a user service pins the default sink to the speakers |
+| Session | HDMI may win the default-node race; adaptive clock | 48 kHz graph lock + high-quality resampling; a jack-driven router switches speakers ↔ DA7219 headphones and pins the speakers at login |
 
 ## Quick start
 
@@ -65,8 +65,10 @@ pactl get-default-sink
 pactl move-sink-input <id> alsa_output.platform-avs_max98373.18.auto.HiFi__Speaker__sink
 ```
 
-The `atlas-speaker-default.service` user unit pins the default sink at login;
-the installer also sets it immediately.
+The `headphone-switch.service` user unit pins the default sink to the speakers
+at login and switches to the DA7219 headphones when the jack is plugged in
+(and back on unplug). It is routing-only: it never touches the speaker DSP/UCM,
+so speaker quality is unaffected. An explicit sink choice (e.g. HDMI) is kept.
 
 ## How it works
 
@@ -140,7 +142,7 @@ firmware/               ChromeOS AVS basefw/module loader/topology/libraries + b
 ucm/                    ChromeOS-style UCM speaker profile (calibration + cset-tlv)
 rollback/               pre-transplant UCM speaker calibration
 pipewire/               48 kHz graph lock + high-quality resampler
-user/                   atlas-speaker-default.service (pin the speaker sink)
+user/                   headphone-switch.service/.sh (jack routing + speaker pin)
 optional/               userspace smart-filter EQ (fallback only; not installed)
 BLOBS.md                firmware provenance and licensing
 ```

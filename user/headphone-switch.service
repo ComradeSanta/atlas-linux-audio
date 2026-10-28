@@ -1,0 +1,12 @@
+[Unit]
+Description=Switch output between DA7219 headphones and MAX98373 speakers on jack events
+After=pipewire.service pipewire-pulse.service wireplumber.service
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/headphone-switch.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

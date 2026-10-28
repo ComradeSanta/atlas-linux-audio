@@ -44,9 +44,15 @@ rm -rf /opt/google/dsm /opt/google/waves
 
 if [ -n "$REAL_USER" ]; then
     echo "== remove user-session additions ($REAL_USER)"
-    as_user systemctl --user disable --now atlas-speaker-default.service 2>/dev/null || true
+    as_user systemctl --user disable --now headphone-switch.service 2>/dev/null || true
+    rm -f "$UHOME/.local/bin/headphone-switch.sh"
+    rm -f "$UHOME/.config/systemd/user/headphone-switch.service"
     rm -f "$UHOME/.config/systemd/user/atlas-speaker-default.service"
     rm -f "$UHOME/.config/pipewire/pipewire.conf.d/20-atlas-clock.conf"
+    if [ -f "$UHOME/.config/pipewire/pipewire-pulse.conf.d/59-switch-on-connect.conf.disabled" ]; then
+        mv "$UHOME/.config/pipewire/pipewire-pulse.conf.d/59-switch-on-connect.conf.disabled" \
+           "$UHOME/.config/pipewire/pipewire-pulse.conf.d/59-switch-on-connect.conf"
+    fi
     as_user systemctl --user daemon-reload 2>/dev/null || true
 fi
 
