@@ -22,6 +22,8 @@ KREL="$(uname -r)"
 FW=/lib/firmware/intel/avs
 UCMDIR=/usr/share/alsa/ucm2/Custom/avs_max98373-atlas
 CONFD=/usr/share/alsa/ucm2/conf.d/avs_max98373
+UCM7239DIR=/usr/share/alsa/ucm2/Custom/avs_da7219-atlas
+CONFD7239=/usr/share/alsa/ucm2/conf.d/avs_da7219
 SPK=alsa_output.platform-avs_max98373.18.auto.HiFi__Speaker__sink
 
 FORCE=0
@@ -61,12 +63,22 @@ install -m 0644 \
     "$REPO/firmware/skl/dsp_mod_C75061F3-F2B2-4DCC-8F9F-82ABB4131E66.bin" \
     "$FW/skl/"
 
-echo "== 3/6 UCM speaker profile"
+echo "== 3/6 UCM speaker + headphone profiles"
 install -d "$UCMDIR" "$CONFD"
 install -m 0644 "$REPO/ucm/avs_max98373-atlas.conf" \
     "$REPO/ucm/avs_max98373-atlas-HiFi.conf" "$UCMDIR/"
 install -m 0644 "$REPO/ucm/AVS I2S MAX98373.conf" \
     "$CONFD/AVS I2S MAX98373.conf"
+# DA7219 headphone card: stock Atlas UCM only exposes a "Headphones" device
+# gated on "Headphone Jack".  A 3-pole plug is reported by the DA7219 AAD as
+# "Line Out", so the custom profile also exposes a Line Out device for the
+# same HP outputs; otherwise the HiFi profile is unavailable and no sink
+# appears when ordinary headphones are plugged in.
+install -d "$UCM7239DIR" "$CONFD7239"
+install -m 0644 "$REPO/ucm/da7219/avs_da7219-atlas.conf" \
+    "$REPO/ucm/da7219/avs_da7219-atlas-HiFi.conf" "$UCM7239DIR/"
+ln -sfn ../../Custom/avs_da7219-atlas/avs_da7219-atlas.conf \
+    "$CONFD7239/AVS I2S DA7219.conf"
 
 echo "== 4/6 Waves/DSM tuning blobs"
 install -d /opt/google/dsm /opt/google/waves

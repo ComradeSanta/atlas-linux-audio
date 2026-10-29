@@ -9,6 +9,8 @@
 #
 # Behavior:
 #   jack in  -> DA7219 HiFi profile, default sink = headphones, move streams.
+#               A 3-pole plug is reported by the DA7219 AAD as "Line Out";
+#               both that and "Headphone Jack" count as headphones here.
 #   jack out -> if headphones were the default, hand playback to the speakers;
 #               otherwise honour the user's explicit sink (e.g. HDMI) and only
 #               rescue streams left on headphones; then DA7219 profile off.
@@ -25,15 +27,22 @@ set -u
 
 SPK='alsa_output.platform-avs_max98373.18.auto.HiFi__Speaker__sink'
 DA7219_CARD='alsa_card.platform-avs_da7219.19.auto'
-DA7219_PROFILE='HiFi'
+DA7219_PROFILE='HiFi'   # profile-name prefix; WirePlumber appends "(Headphones|Line Out, Mic)"
 JACK_NUMID=''
+LINE_NUMID=''
 PRE_DEFAULT="${XDG_RUNTIME_DIR:-/tmp}/headphone-switch.pre"
 
 log() { printf '%s\n' "headphone-switch: $*" >&2; }
 
 jack_numid() {
     amixer -c DA7219 controls 2>/dev/null |
-        awk '/iface=CARD,name=.Headphone Jack.$/{n=$0; sub(/^numid=/,"",n); sub(/,.*/,"",n); print n; exit}'
+        grep -F "iface=CARD,name='$1'" | head -n1 |
+        sed 's/^numid=//; s/,.*//'
+}
+
+resolve_jacks() {
+    JACK_NUMID=$(jack_numid 'Headphone Jack')
+    LINE_NUMID=$(jack_numid 'Line Out Jack')
 }
 
 jack_present() {
@@ -41,21 +50,28 @@ jack_present() {
         in)  return 0 ;;
         out) return 1 ;;
     esac
-    if [ -z "$JACK_NUMID" ]; then
-        JACK_NUMID=$(jack_numid)
+    if [ -z "$JACK_NUMID" ] || [ -z "$LINE_NUMID" ]; then
+        resolve_jacks
     fi
-    if [ -n "$JACK_NUMID" ]; then
-        local out
-        out=$(amixer -c DA7219 cget numid="$JACK_NUMID" 2>/dev/null)
-        if [ -n "$out" ]; then
-            grep -q 'values=on' <<<"$out" && return 0
+    local n out
+    for n in "$JACK_NUMID" "$LINE_NUMID"; do
+        [ -n "$n" ] || continue
+        out=$(amixer -c DA7219 cget numid="$n" 2>/dev/null)
+        if [ -z "$out" ]; then
+            # Card re-probed; numids may have changed.
+            JACK_NUMID=''
+            LINE_NUMID=''
+            resolve_jacks
+            for n in "$JACK_NUMID" "$LINE_NUMID"; do
+                [ -n "$n" ] || continue
+                amixer -c DA7219 cget numid="$n" 2>/dev/null |
+                    grep -q 'values=on' && return 0
+            done
             return 1
         fi
-        JACK_NUMID=''   # card re-probed; numid may have changed
-    fi
-    JACK_NUMID=$(jack_numid)
-    [ -n "$JACK_NUMID" ] || return 1
-    amixer -c DA7219 cget numid="$JACK_NUMID" 2>/dev/null | grep -q 'values=on'
+        grep -q 'values=on' <<<"$out" && return 0
+    done
+    return 1
 }
 
 sink_index() {
@@ -65,7 +81,7 @@ sink_index() {
 
 hp_sink() {
     pactl -f json list sinks 2>/dev/null |
-        jq -r '.[] | select(.name | test("avs_da7219.*Headphones")) | .name' |
+        jq -r '.[] | select(.name | test("avs_da7219.*(Headphones|Line.?Out)")) | .name' |
         head -n1
 }
 
@@ -73,8 +89,22 @@ speaker_present() {
     pactl list short sinks 2>/dev/null | grep -qF "$SPK"
 }
 
+da7219_profile() {
+    pactl -f json list cards 2>/dev/null |
+        jq -r --arg c "$DA7219_CARD" --arg p "$DA7219_PROFILE" '
+            .[] | select(.name == $c)
+            | .profiles | to_entries[]
+            | select(.key | startswith($p))
+            | select(.value.available == true)
+            | .key' 2>/dev/null | head -n1
+}
+
 ensure_da7219_profile() {
-    local want="$1" cur
+    local want="${1:-}" cur
+    if [ -z "$want" ]; then
+        want=$(da7219_profile)
+        [ -n "$want" ] || { log "no available DA7219 HiFi profile yet"; return 1; }
+    fi
     cur=$(pactl -f json list cards 2>/dev/null |
         jq -r --arg c "$DA7219_CARD" '.[]|select(.name==$c)|.active_profile' 2>/dev/null)
     [ "$cur" = "$want" ] && return 0
@@ -123,7 +153,7 @@ move_streams_from() {
 
 engage() {  # jack in
     local hp cur
-    ensure_da7219_profile "$DA7219_PROFILE"
+    ensure_da7219_profile
     hp=$(hp_sink)
     [ -n "$hp" ] || { log "jack in but headphone sink not ready yet"; return 0; }
     # Remember what was playing before the headphones, so an explicit HDMI (or
@@ -162,7 +192,7 @@ sync_once() {
 
 daemon() {
     local last='' pin=0 now hp
-    JACK_NUMID=$(jack_numid)
+    resolve_jacks
     jack_present || pin=1
     sync_once
     last=$(jack_present && echo in || echo out)
@@ -178,7 +208,7 @@ daemon() {
             if [ -z "$hp" ]; then
                 # Profile set but the sink is still coming up (or the profile
                 # change raced the jack event); retry.
-                ensure_da7219_profile "$DA7219_PROFILE"
+                ensure_da7219_profile
                 continue
             fi
             # Also covers the sink appearing a moment after the profile change.

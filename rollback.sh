@@ -13,6 +13,8 @@ KREL="$(uname -r)"
 FW=/lib/firmware/intel/avs
 UCMDIR=/usr/share/alsa/ucm2/Custom/avs_max98373-atlas
 CONFD=/usr/share/alsa/ucm2/conf.d/avs_max98373
+UCM7239DIR=/usr/share/alsa/ucm2/Custom/avs_da7219-atlas
+CONFD7239=/usr/share/alsa/ucm2/conf.d/avs_da7219
 
 as_user() {
     [ -n "$REAL_USER" ] || return 0
@@ -38,6 +40,10 @@ install -m 0644 "$REPO/rollback/avs_max98373-atlas.conf" \
     "$REPO/rollback/avs_max98373-atlas-HiFi.conf" "$UCMDIR/"
 install -m 0644 "$REPO/rollback/AVS I2S MAX98373.conf" \
     "$CONFD/AVS I2S MAX98373.conf"
+
+echo "== remove Atlas DA7219 headphone UCM override"
+rm -rf "$UCM7239DIR"
+rm -f "$CONFD7239/AVS I2S DA7219.conf"
 
 echo "== remove DSP tuning blobs"
 rm -rf /opt/google/dsm /opt/google/waves
